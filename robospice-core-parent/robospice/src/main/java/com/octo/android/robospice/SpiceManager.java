@@ -18,7 +18,6 @@ import java.util.concurrent.PriorityBlockingQueue;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
-
 import roboguice.util.temp.Ln;
 import android.app.Activity;
 import android.content.ComponentName;
@@ -26,7 +25,6 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
 import android.os.IBinder;
-
 import com.octo.android.robospice.SpiceService.SpiceServiceBinder;
 import com.octo.android.robospice.command.GetAllCacheKeysCommand;
 import com.octo.android.robospice.command.GetAllDataFromCacheCommand;
@@ -44,23 +42,9 @@ import com.octo.android.robospice.persistence.exception.CacheLoadingException;
 import com.octo.android.robospice.persistence.exception.CacheSavingException;
 import com.octo.android.robospice.request.CachedSpiceRequest;
 import com.octo.android.robospice.request.SpiceRequest;
+import com.octo.android.robospice.request.listener.PendingRequestListener;
 import com.octo.android.robospice.request.listener.RequestListener;
 import com.octo.android.robospice.request.listener.SpiceServiceServiceListener;
-
-/**
- * The instances of this class allow to acces the {@link SpiceService}. <br/>
- * They are tied to activities and obtain a local binding to the
- * {@link SpiceService}. When binding occurs, the {@link SpiceManager} will send
- * commadnds to the {@link SpiceService}, to execute requests, clear cache,
- * prevent listeners from being called and so on. Basically, all features of the
- * {@link SpiceService} are accessible from the {@link SpiceManager}. It acts as
- * an asynchronous proxy : every call to a {@link SpiceService} method is
- * asynchronous and will occur as soon as possible when the {@link SpiceManager}
- * successfully binds to the service.
- * @author jva
- * @author sni
- * @author mwa
- */
 
 /*
  * Note to maintainers : This class is quite complex and requires background
@@ -76,6 +60,7 @@ public class SpiceManager implements Runnable {
 
     /** A reference on the {@link SpiceService} obtained by local binding. */
     private SpiceService spiceService;
+
     /** {@link SpiceService} binder. */
     private SpiceServiceConnection spiceServiceConnection = new SpiceServiceConnection();
 
@@ -95,15 +80,13 @@ public class SpiceManager implements Runnable {
      * The list of all requests that have not yet been passed to the service.
      * All iterations must be synchronized.
      */
-    private final Map<CachedSpiceRequest<?>, Set<RequestListener<?>>> mapRequestToLaunchToRequestListener = Collections
-        .synchronizedMap(new IdentityHashMap<CachedSpiceRequest<?>, Set<RequestListener<?>>>());
+    private final Map<CachedSpiceRequest<?>, Set<RequestListener<?>>> mapRequestToLaunchToRequestListener = Collections.synchronizedMap(new IdentityHashMap<CachedSpiceRequest<?>, Set<RequestListener<?>>>());
 
     /**
      * The list of all requests that have already been passed to the service.
      * All iterations must be synchronized.
      */
-    private final Map<CachedSpiceRequest<?>, Set<RequestListener<?>>> mapPendingRequestToRequestListener = Collections
-        .synchronizedMap(new IdentityHashMap<CachedSpiceRequest<?>, Set<RequestListener<?>>>());
+    private final Map<CachedSpiceRequest<?>, Set<RequestListener<?>>> mapPendingRequestToRequestListener = Collections.synchronizedMap(new IdentityHashMap<CachedSpiceRequest<?>, Set<RequestListener<?>>>());
 
     private final ExecutorService executorService = Executors.newFixedThreadPool(getThreadCount(), new ThreadFactory() {
 
@@ -113,7 +96,6 @@ public class SpiceManager implements Runnable {
             t.setPriority(Thread.MIN_PRIORITY);
             return t;
         }
-
     });
 
     /**
@@ -121,8 +103,10 @@ public class SpiceManager implements Runnable {
      * {@link SpiceService}.
      */
     private final ReentrantLock lockAcquireService = new ReentrantLock();
+
     /** A monitor to ensure service is bound before accessing it. */
     private final Condition conditionServiceBound = lockAcquireService.newCondition();
+
     /** A monitor to ensure service is unbound. */
     private final Condition conditionServiceUnbound = lockAcquireService.newCondition();
 
@@ -144,17 +128,6 @@ public class SpiceManager implements Runnable {
      */
     private volatile boolean isUnbinding = false;
 
-    // ============================================================================================
-    // THREAD BEHAVIOR
-    // ============================================================================================
-
-    /**
-     * Creates a {@link SpiceManager}. Typically this occurs in the construction
-     * of an Activity or Fragment. This method will check if the service to bind
-     * to has been properly declared in AndroidManifest.
-     * @param spiceServiceClass
-     *            the service class to bind to.
-     */
     public SpiceManager(final Class<? extends SpiceService> spiceServiceClass) {
         this.spiceServiceClass = spiceServiceClass;
     }
@@ -181,13 +154,10 @@ public class SpiceManager implements Runnable {
         if (runner != null) {
             throw new IllegalStateException("Already started.");
         } else {
-
-            // start the binding to the service
             runner = new Thread(this);
             runner.setPriority(Thread.MIN_PRIORITY);
             isStopped = false;
             runner.start();
-
             Ln.d("SpiceManager started.");
         }
     }
@@ -202,7 +172,6 @@ public class SpiceManager implements Runnable {
 
     @Override
     public void run() {
-        // start the service it is not started yet.
         Context context = contextWeakReference.get();
         if (context != null) {
             checkServiceIsProperlyDeclaredInAndroidManifest(context);
@@ -213,9 +182,7 @@ public class SpiceManager implements Runnable {
             isStopped = true;
             return;
         }
-
         bindToService(contextWeakReference.get());
-
         try {
             waitForServiceToBeBound();
             if (spiceService == null) {
@@ -286,7 +253,6 @@ public class SpiceManager implements Runnable {
         if (this.runner == null) {
             throw new IllegalStateException("Not started yet");
         }
-
         Ln.d("SpiceManager stopping. Joining");
         dontNotifyAnyRequestListenersInternal();
         unbindFromService(contextWeakReference.get());
@@ -301,7 +267,6 @@ public class SpiceManager implements Runnable {
     // ============================================================================================
     // PUBLIC EXPOSED METHODS : requests executions
     // ============================================================================================
-
     /**
      * Get some data previously saved in cache with key <i>requestCacheKey</i>
      * with maximum time in cache : <i>cacheDuration</i> millisecond and
@@ -331,7 +296,7 @@ public class SpiceManager implements Runnable {
      *            {@link RequestListener#onRequestFailure(com.octo.android.robospice.persistence.exception.SpiceException)}
      *            method.
      */
-    public <T> void getFromCache(final Class<T> clazz, final Object requestCacheKey, final long cacheExpiryDuration, final RequestListener<T> requestListener) {
+    public <T extends java.lang.Object> void getFromCache(final Class<T> clazz, final Object requestCacheKey, final long cacheExpiryDuration, final RequestListener<T> requestListener) {
         final SpiceRequest<T> request = new SpiceRequest<T>(clazz) {
 
             @Override
@@ -361,7 +326,7 @@ public class SpiceManager implements Runnable {
      * @param requestListener
      *            the listener to notify when the request will finish.
      */
-    public <T> void addListenerIfPending(final Class<T> clazz, final Object requestCacheKey, final RequestListener<T> requestListener) {
+    public <T extends java.lang.Object> void addListenerIfPending(final Class<T> clazz, final Object requestCacheKey, final RequestListener<T> requestListener) {
         final SpiceRequest<T> request = new SpiceRequest<T>(clazz) {
 
             @Override
@@ -375,6 +340,23 @@ public class SpiceManager implements Runnable {
     }
 
     /**
+     * Add listener to a pending request if it exists. If no such request
+     * exists, this method calls onRequestNotFound on the listener. If a
+     * request identified by clazz and requestCacheKey, it will receive an
+     * additional listener.
+     * @param clazz
+     *            the class of the result of the pending request to look for.
+     * @param requestCacheKey
+     *            the key used to store and retrieve the result of the request
+     *            in the cache
+     * @param requestListener
+     *            the listener to notify when the request will finish.
+     */
+    public <T> void addListenerIfPending(final Class<T> clazz, final Object requestCacheKey, final PendingRequestListener<T> requestListener) {
+        addListenerIfPending(clazz, requestCacheKey, (RequestListener<T>) requestListener);
+    }
+
+    /**
      * Execute a request, without using cache. No result from cache will be
      * returned. The method {@link SpiceRequest#loadDataFromNetwork()} will
      * always be invoked. The result will not be stored in cache.
@@ -383,7 +365,7 @@ public class SpiceManager implements Runnable {
      * @param requestListener
      *            the listener to notify when the request will finish.
      */
-    public <T> void execute(final SpiceRequest<T> request, final RequestListener<T> requestListener) {
+    public <T extends java.lang.Object> void execute(final SpiceRequest<T> request, final RequestListener<T> requestListener) {
         final CachedSpiceRequest<T> cachedSpiceRequest = new CachedSpiceRequest<T>(request, null, DurationInMillis.ALWAYS_RETURNED);
         execute(cachedSpiceRequest, requestListener);
     }
@@ -413,7 +395,7 @@ public class SpiceManager implements Runnable {
      * @param requestListener
      *            the listener to notify when the request will finish
      */
-    public <T> void execute(final SpiceRequest<T> request, final Object requestCacheKey, final long cacheExpiryDuration, final RequestListener<T> requestListener) {
+    public <T extends java.lang.Object> void execute(final SpiceRequest<T> request, final Object requestCacheKey, final long cacheExpiryDuration, final RequestListener<T> requestListener) {
         final CachedSpiceRequest<T> cachedSpiceRequest = new CachedSpiceRequest<T>(request, requestCacheKey, cacheExpiryDuration);
         execute(cachedSpiceRequest, requestListener);
     }
@@ -428,7 +410,7 @@ public class SpiceManager implements Runnable {
      * @param requestListener
      *            the listener to notify when the request will finish
      */
-    public <T> void execute(final CachedSpiceRequest<T> cachedSpiceRequest, final RequestListener<T> requestListener) {
+    public <T extends java.lang.Object> void execute(final CachedSpiceRequest<T> cachedSpiceRequest, final RequestListener<T> requestListener) {
         addRequestListenerToListOfRequestListeners(cachedSpiceRequest, requestListener);
         this.requestQueue.add(cachedSpiceRequest);
     }
@@ -458,7 +440,7 @@ public class SpiceManager implements Runnable {
      * @param requestListener
      *            the listener to notify when the request will finish
      */
-    public <T> void getFromCacheAndLoadFromNetworkIfExpired(final SpiceRequest<T> request, final Object requestCacheKey, final long cacheExpiryDuration, final RequestListener<T> requestListener) {
+    public <T extends java.lang.Object> void getFromCacheAndLoadFromNetworkIfExpired(final SpiceRequest<T> request, final Object requestCacheKey, final long cacheExpiryDuration, final RequestListener<T> requestListener) {
         final CachedSpiceRequest<T> cachedSpiceRequest = new CachedSpiceRequest<T>(request, requestCacheKey, cacheExpiryDuration);
         cachedSpiceRequest.setAcceptingDirtyCache(true);
         execute(cachedSpiceRequest, requestListener);
@@ -477,9 +459,9 @@ public class SpiceManager implements Runnable {
      *            a listener that will be notified of this request's success or
      *            failure. May be null.
      */
-    public <U, T extends U> void putInCache(final Class<U> clazz, final Object requestCacheKey, final T data, RequestListener<U> listener) {
-        @SuppressWarnings({ "unchecked", "rawtypes" })
-        final SpiceRequest<U> spiceRequest = new SpiceRequest(clazz) {
+    public <U extends java.lang.Object, T extends U> void putInCache(final Class<U> clazz, final Object requestCacheKey, final T data, RequestListener<U> listener) {
+        @SuppressWarnings(value = { "unchecked", "rawtypes" }) final SpiceRequest<U> spiceRequest = new SpiceRequest(clazz) {
+
             @Override
             public U loadDataFromNetwork() throws Exception {
                 return data;
@@ -502,7 +484,7 @@ public class SpiceManager implements Runnable {
      *            the data to store. Maybe null if supported by underlying
      *            ObjectPersister.
      */
-    public <T> void putInCache(final Class<? super T> clazz, final Object requestCacheKey, final T data) {
+    public <T extends java.lang.Object> void putInCache(final Class<? super T> clazz, final Object requestCacheKey, final T data) {
         putInCache(clazz, requestCacheKey, data, null);
     }
 
@@ -519,8 +501,8 @@ public class SpiceManager implements Runnable {
      *            a listener that will be notified of this request's success or
      *            failure. May be null.
      */
-    @SuppressWarnings("unchecked")
-    public <T> void putInCache(final Object requestCacheKey, final T data, RequestListener<T> listener) {
+    @SuppressWarnings(value = { "unchecked" })
+    public <T extends java.lang.Object> void putInCache(final Object requestCacheKey, final T data, RequestListener<T> listener) {
         putInCache((Class<T>) data.getClass(), requestCacheKey, data, listener);
     }
 
@@ -537,8 +519,8 @@ public class SpiceManager implements Runnable {
      *            the data to store. Maybe null if supported by underlying
      *            ObjectPersister.
      */
-    @SuppressWarnings("unchecked")
-    public <T> void putInCache(final Object requestCacheKey, final T data) {
+    @SuppressWarnings(value = { "unchecked" })
+    public <T extends java.lang.Object> void putInCache(final Object requestCacheKey, final T data) {
         putInCache((Class<T>) data.getClass(), requestCacheKey, data);
     }
 
@@ -552,7 +534,7 @@ public class SpiceManager implements Runnable {
      * @param requestCacheKey
      *            the cache key associated to the request's results.
      */
-    public <T> void cancel(final Class<T> clazz, final Object requestCacheKey) {
+    public <T extends java.lang.Object> void cancel(final Class<T> clazz, final Object requestCacheKey) {
         final SpiceRequest<T> request = new SpiceRequest<T>(clazz) {
 
             @Override
@@ -570,7 +552,6 @@ public class SpiceManager implements Runnable {
     // ============================================================================================
     // PUBLIC EXPOSED METHODS : unregister listeners
     // ============================================================================================
-
     /**
      * Disable request listeners notifications for a specific request.<br/>
      * None of the listeners associated to this request will be called when
@@ -587,6 +568,7 @@ public class SpiceManager implements Runnable {
      */
     public void dontNotifyRequestListenersForRequest(final SpiceRequest<?> request) {
         executorService.execute(new Runnable() {
+
             @Override
             public void run() {
                 dontNotifyRequestListenersForRequestInternal(request);
@@ -606,18 +588,12 @@ public class SpiceManager implements Runnable {
     protected void dontNotifyRequestListenersForRequestInternal(final SpiceRequest<?> request) {
         lockSendRequestsToService.lock();
         try {
-
             final boolean requestNotPassedToServiceYet = removeListenersOfCachedRequestToLaunch(request);
             Ln.v("Removed from requests to launch list : " + requestNotPassedToServiceYet);
-
-            // if the request was already passed to service, bind to
-            // service and
-            // unregister listeners.
             if (!requestNotPassedToServiceYet) {
                 removeListenersOfPendingCachedRequest(request);
                 Ln.v("Removed from pending requests list");
             }
-
         } catch (final InterruptedException e) {
             Ln.e(e, "Interrupted while removing listeners.");
         } finally {
@@ -678,6 +654,7 @@ public class SpiceManager implements Runnable {
      */
     public void dontNotifyAnyRequestListeners() {
         executorService.execute(new Runnable() {
+
             @Override
             public void run() {
                 dontNotifyAnyRequestListenersInternal();
@@ -694,10 +671,8 @@ public class SpiceManager implements Runnable {
     protected void dontNotifyAnyRequestListenersInternal() {
         lockSendRequestsToService.lock();
         try {
-
             mapRequestToLaunchToRequestListener.clear();
             Ln.v("Cleared listeners of all requests to launch");
-
             removeListenersOfAllPendingCachedRequests();
         } catch (final InterruptedException e) {
             Ln.e(e, "Interrupted while removing listeners.");
@@ -718,7 +693,6 @@ public class SpiceManager implements Runnable {
                     return;
                 }
                 for (final CachedSpiceRequest<?> cachedSpiceRequest : mapPendingRequestToRequestListener.keySet()) {
-
                     final Set<RequestListener<?>> setRequestListeners = mapPendingRequestToRequestListener.get(cachedSpiceRequest);
                     if (setRequestListeners != null) {
                         Ln.d("Removing listeners of request : " + cachedSpiceRequest.toString() + " : " + setRequestListeners.size());
@@ -751,7 +725,6 @@ public class SpiceManager implements Runnable {
     // ============================================================================================
     // PUBLIC EXPOSED METHODS : content service driving.
     // ============================================================================================
-
     /**
      * Cancel a specific request
      * @param request
@@ -759,6 +732,7 @@ public class SpiceManager implements Runnable {
      */
     public void cancel(final SpiceRequest<?> request) {
         executorService.execute(new Runnable() {
+
             @Override
             public void run() {
                 request.cancel();
@@ -771,6 +745,7 @@ public class SpiceManager implements Runnable {
      */
     public void cancelAllRequests() {
         executorService.execute(new Runnable() {
+
             @Override
             public void run() {
                 cancelAllRequestsInternal();
@@ -781,22 +756,11 @@ public class SpiceManager implements Runnable {
     private void cancelAllRequestsInternal() {
         lockSendRequestsToService.lock();
         try {
-            // cancel each request that to be sent to service, and
-            // keep
-            // listening for
-            // cancellation.
             synchronized (mapRequestToLaunchToRequestListener) {
                 for (final CachedSpiceRequest<?> cachedSpiceRequest : mapRequestToLaunchToRequestListener.keySet()) {
                     cachedSpiceRequest.cancel();
                 }
             }
-
-            // cancel each request that has been sent to service,
-            // and keep
-            // listening for cancellation.
-            // we must duplicate the list as each call to cancel
-            // will, by a listener of request processing
-            // remove the request from our list.
             final List<CachedSpiceRequest<?>> listDuplicate = new ArrayList<CachedSpiceRequest<?>>(mapPendingRequestToRequestListener.keySet());
             for (final CachedSpiceRequest<?> cachedSpiceRequest : listDuplicate) {
                 cachedSpiceRequest.cancel();
@@ -810,7 +774,7 @@ public class SpiceManager implements Runnable {
         return executeCommand(new GetAllCacheKeysCommand(this, clazz));
     }
 
-    public <T> Future<List<T>> getAllDataFromCache(final Class<T> clazz) throws CacheLoadingException {
+    public <T extends java.lang.Object> Future<List<T>> getAllDataFromCache(final Class<T> clazz) throws CacheLoadingException {
         return executeCommand(new GetAllDataFromCacheCommand<T>(this, clazz));
     }
 
@@ -831,7 +795,7 @@ public class SpiceManager implements Runnable {
      *             Exception thrown when a problem occurs while loading data
      *             from cache.
      */
-    public <T> Future<T> getDataFromCache(final Class<T> clazz, final Object cacheKey) throws CacheLoadingException {
+    public <T extends java.lang.Object> Future<T> getDataFromCache(final Class<T> clazz, final Object cacheKey) throws CacheLoadingException {
         return executeCommand(new GetDataFromCacheCommand<T>(this, clazz, cacheKey));
     }
 
@@ -852,7 +816,7 @@ public class SpiceManager implements Runnable {
      *             Exception thrown when a problem occurs while loading data
      *             from cache.
      */
-    public <T> Future<T> putDataInCache(final Object cacheKey, final T data) throws CacheSavingException, CacheCreationException {
+    public <T extends java.lang.Object> Future<T> putDataInCache(final Object cacheKey, final T data) throws CacheSavingException, CacheCreationException {
         return executeCommand(new PutDataInCacheCommand<T>(this, data, cacheKey));
     }
 
@@ -903,11 +867,10 @@ public class SpiceManager implements Runnable {
      * @param cacheKey
      *            the key of the object in cache
      */
-    public <T> void removeDataFromCache(final Class<T> clazz, final Object cacheKey) {
+    public <T extends java.lang.Object> void removeDataFromCache(final Class<T> clazz, final Object cacheKey) {
         if (clazz == null || cacheKey == null) {
             throw new IllegalArgumentException("Both parameters must be non null.");
         }
-
         executeCommand(new RemoveDataFromCacheCommand(this, clazz, cacheKey));
     }
 
@@ -916,7 +879,7 @@ public class SpiceManager implements Runnable {
      * @param clazz
      *            the type of data you want to remove from cache.
      */
-    public <T> Future<?> removeDataFromCache(final Class<T> clazz) {
+    public <T extends java.lang.Object> Future<?> removeDataFromCache(final Class<T> clazz) {
         if (clazz == null) {
             throw new IllegalArgumentException("Clazz must be non null.");
         }
@@ -941,7 +904,7 @@ public class SpiceManager implements Runnable {
         executeCommand(new SetFailOnCacheErrorCommand(this, failOnCacheError));
     }
 
-    private <T> void addRequestListenerToListOfRequestListeners(final CachedSpiceRequest<T> cachedSpiceRequest, final RequestListener<T> requestListener) {
+    private <T extends java.lang.Object> void addRequestListenerToListOfRequestListeners(final CachedSpiceRequest<T> cachedSpiceRequest, final RequestListener<T> requestListener) {
         synchronized (mapRequestToLaunchToRequestListener) {
             Set<RequestListener<?>> listeners = mapRequestToLaunchToRequestListener.get(cachedSpiceRequest);
             if (listeners == null) {
@@ -950,34 +913,28 @@ public class SpiceManager implements Runnable {
             }
             listeners.add(requestListener);
         }
-
     }
 
     // -------------------------------
     // -------Listeners notification
     // -------------------------------
-
     /**
      * Dumps request processor state.
      */
     public void dumpState() {
-
         executorService.execute(new Runnable() {
+
             @Override
             public void run() {
                 lockSendRequestsToService.lock();
                 try {
                     final StringBuilder stringBuilder = new StringBuilder();
                     stringBuilder.append("[SpiceManager : ");
-
                     stringBuilder.append("Requests to be launched : \n");
                     dumpMap(stringBuilder, mapRequestToLaunchToRequestListener);
-
                     stringBuilder.append("Pending requests : \n");
                     dumpMap(stringBuilder, mapPendingRequestToRequestListener);
-
                     stringBuilder.append(']');
-
                     waitForServiceToBeBound();
                     if (spiceService == null) {
                         return;
@@ -991,10 +948,6 @@ public class SpiceManager implements Runnable {
             }
         });
     }
-
-    // ============================================================================================
-    // INNER CLASS
-    // ============================================================================================
 
     /** Reacts to binding/unbinding with {@link SpiceService}. */
     public class SpiceServiceConnection implements ServiceConnection {
@@ -1031,6 +984,7 @@ public class SpiceManager implements Runnable {
      * Called when a request has been processed by the {@link SpiceService}.
      */
     private class RequestRemoverSpiceServiceListener implements SpiceServiceServiceListener {
+
         @Override
         public void onRequestProcessed(final CachedSpiceRequest<?> cachedSpiceRequest) {
             synchronized (mapPendingRequestToRequestListener) {
@@ -1042,7 +996,6 @@ public class SpiceManager implements Runnable {
     // ============================================================================================
     // PRIVATE METHODS : SpiceService binding management.
     // ============================================================================================
-
     /** For testing purpose. */
     protected boolean isBound() {
         return spiceService != null;
@@ -1050,14 +1003,11 @@ public class SpiceManager implements Runnable {
 
     private void bindToService(final Context context) {
         if (context == null || isStopped) {
-            // fix issue 40. Thx Shussu
             return;
         }
-
         lockAcquireService.lock();
         lockSendRequestsToService.lock();
         try {
-
             if (spiceService == null) {
                 final Intent intentService = new Intent(context, spiceServiceClass);
                 Ln.v("Binding to service.");
@@ -1070,7 +1020,6 @@ public class SpiceManager implements Runnable {
                 }
             }
         } catch (Exception t) {
-            // this should not happen in apps, but can happen during tests.
             Ln.d(t, "Binding to service failed.");
             Ln.d("Context is" + context);
             Ln.d("ApplicationContext is " + context.getApplicationContext() + context.getApplicationContext());
@@ -1084,9 +1033,7 @@ public class SpiceManager implements Runnable {
         if (context == null) {
             return;
         }
-
         lockAcquireService.lock();
-        // fix issue 144 and 86
         lockSendRequestsToService.lock();
         try {
             Ln.v("Unbinding from service start.");
@@ -1114,7 +1061,6 @@ public class SpiceManager implements Runnable {
      */
     protected void waitForServiceToBeBound() throws InterruptedException {
         Ln.d("Waiting for service to be bound.");
-
         lockAcquireService.lock();
         try {
             while (spiceService == null && !isStopped) {
@@ -1133,7 +1079,6 @@ public class SpiceManager implements Runnable {
      */
     protected void waitForServiceToBeUnbound() throws InterruptedException {
         Ln.d("Waiting for service to be unbound.");
-
         lockAcquireService.lock();
         try {
             while (spiceService != null) {
@@ -1144,7 +1089,7 @@ public class SpiceManager implements Runnable {
         }
     }
 
-    private <T> Future<T> executeCommand(SpiceManagerCommand<T> spiceManagerCommand) {
+    private <T extends java.lang.Object> Future<T> executeCommand(SpiceManagerCommand<T> spiceManagerCommand) {
         if (executorService.isShutdown()) {
             return null;
         }
@@ -1163,7 +1108,6 @@ public class SpiceManager implements Runnable {
         synchronized (map) {
             stringBuilder.append(" request count= ");
             stringBuilder.append(mapRequestToLaunchToRequestListener.keySet().size());
-
             stringBuilder.append(", listeners per requests = [");
             for (final Map.Entry<CachedSpiceRequest<?>, Set<RequestListener<?>>> entry : map.entrySet()) {
                 stringBuilder.append(entry.getKey().getClass().getName());
@@ -1184,11 +1128,12 @@ public class SpiceManager implements Runnable {
     }
 
     // ----------------------------------
-    // INNER CLASS
-    // ----------------------------------
     public abstract static class SpiceManagerCommand<T> implements Callable<T> {
+
         protected SpiceManager spiceManager;
+
         private boolean successFull;
+
         private Exception exception;
 
         public SpiceManagerCommand(SpiceManager spiceManager) {
@@ -1207,9 +1152,8 @@ public class SpiceManager implements Runnable {
                         return null;
                     }
                 } catch (InterruptedException e) {
-                    Ln.e(e, "Spice command %s couldn't bind to service.", getClass().getName());
+                    Ln.e(e, "Spice command %s couldn\'t bind to service.", getClass().getName());
                 }
-
                 try {
                     T result = executeWhenBound(spiceManager.spiceService);
                     successFull = true;
@@ -1231,7 +1175,5 @@ public class SpiceManager implements Runnable {
         public Exception getException() {
             return exception;
         }
-
     }
-
 }
